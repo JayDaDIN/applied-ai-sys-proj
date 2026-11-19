@@ -1,0 +1,5 @@
+title,artist,genre,mood,energy,tempo_bpm,valence,danceability,acousticness
+Sunrise City,Neon Echo,pop,happy,0.82,118,0.84,0.79,0.18
+Glitter Highway,Mirror Lake,pop,happy,0.86,124,0.90,0.88,0.08
+Weekend Signal,Kite Club,pop,happy,0.80,120,0.82,0.85,0.15
+Pulse Garden,Chrome Garden,electronic,happy,0.90,128,0.78,0.92,0.05

@@ -1,6 +1,14 @@
 import csv
+import logging
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
+
+if __package__:
+    from .errors import DataLoadError
+else:
+    from errors import DataLoadError
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class Song:
@@ -49,25 +57,55 @@ class Recommender:
         # TODO: Implement explanation logic
         return "Explanation placeholder"
 
+CATALOG_COLUMNS = (
+    "id", "title", "artist", "genre", "mood",
+    "energy", "tempo_bpm", "valence", "danceability", "acousticness",
+)
+
+
 def load_songs(csv_path: str) -> List[Dict]:
-    """Load song records from a CSV file."""
-    with open(csv_path, newline="", encoding="utf-8") as csv_file:
-        songs = []
-        for row in csv.DictReader(csv_file):
-            songs.append(
-                {
-                    "id": int(row["id"]),
-                    "title": row["title"],
-                    "artist": row["artist"],
-                    "genre": row["genre"],
-                    "mood": row["mood"],
-                    "energy": float(row["energy"]),
-                    "tempo_bpm": float(row["tempo_bpm"]),
-                    "valence": float(row["valence"]),
-                    "danceability": float(row["danceability"]),
-                    "acousticness": float(row["acousticness"]),
-                }
+    """Load song records from a CSV file.
+
+    Raises DataLoadError if the file is missing, lacks a required column, or
+    has a value that isn't a number where one is expected.
+    """
+    try:
+        csv_file = open(csv_path, newline="", encoding="utf-8")
+    except OSError as exc:
+        raise DataLoadError(f"Cannot open song catalog {csv_path!r}: {exc.strerror or exc}") from exc
+
+    with csv_file:
+        reader = csv.DictReader(csv_file)
+        missing = [c for c in CATALOG_COLUMNS if c not in (reader.fieldnames or [])]
+        if missing:
+            raise DataLoadError(
+                f"Song catalog {csv_path!r} is missing column(s): {', '.join(missing)}"
             )
+        songs = []
+        for line_number, row in enumerate(reader, start=2):  # line 1 is the header
+            try:
+                songs.append(
+                    {
+                        "id": int(row["id"]),
+                        "title": row["title"],
+                        "artist": row["artist"],
+                        "genre": row["genre"],
+                        "mood": row["mood"],
+                        "energy": float(row["energy"]),
+                        "tempo_bpm": float(row["tempo_bpm"]),
+                        "valence": float(row["valence"]),
+                        "danceability": float(row["danceability"]),
+                        "acousticness": float(row["acousticness"]),
+                    }
+                )
+            except (TypeError, ValueError) as exc:
+                raise DataLoadError(
+                    f"Song catalog {csv_path!r}, line {line_number}: invalid value ({exc})"
+                ) from exc
+
+    if not songs:
+        raise DataLoadError(f"Song catalog {csv_path!r} has no songs.")
+    logger.info("Loaded %d songs from %s", len(songs), csv_path)
     return songs
 
 def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:

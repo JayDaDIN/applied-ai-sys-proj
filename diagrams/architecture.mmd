@@ -1,0 +1,75 @@
+%% Music Recommender with Retrieval-Augmented Generation
+%% Flow: input -> retrieve -> generate -> validate -> output, with human and test checkpoints.
+flowchart TD
+    %% ---------- Inputs ----------
+    subgraph IN["Input"]
+        PL["Listener playlist CSV<br/>catalog or Spotify export"]
+        CAT[("Song catalog<br/>data/songs.csv")]
+        FLAGS["CLI flags<br/>--playlist --web --no-llm -k"]
+    end
+
+    %% ---------- Retrieval ----------
+    subgraph RET["Retriever"]
+        LOAD["Playlist loader<br/>src/playlist.py"]
+        PROF["Taste profile builder<br/>avg features + genre mapping"]
+        SCORE["Rule-based scorer<br/>score_song / recommend_songs"]
+        CAND["Top-N candidates<br/>excludes songs already owned"]
+        WEB["Web retriever, optional<br/>Claude + web_search tool"]
+    end
+
+    %% ---------- Generation ----------
+    subgraph GEN["Generator / Agent"]
+        PROMPT["Prompt builder<br/>profile + candidates + web notes"]
+        LLM["Claude curator<br/>claude-opus-5-5, JSON schema output"]
+    end
+
+    %% ---------- Evaluation ----------
+    subgraph EVAL["Evaluator / Guardrails"]
+        VAL["validate_picks<br/>drop unknown or duplicate IDs"]
+        REF["Refusal check<br/>server-side fallback model"]
+        FALLBACK["Fallback to rule-based ranking<br/>if no valid picks or --no-llm"]
+    end
+
+    %% ---------- Output ----------
+    OUT["CLI output<br/>ranked songs, scores, reasons,<br/>listener summary, web sources"]
+
+    %% ---------- Data flow ----------
+    PL --> LOAD --> PROF --> SCORE
+    CAT --> SCORE
+    FLAGS --> LOAD
+    SCORE --> CAND
+    PROF -->|top artists and genres| WEB
+    CAND --> PROMPT
+    WEB -->|notes as untrusted data| PROMPT
+    PROMPT --> LLM --> REF --> VAL
+    CAND -->|allowed song IDs| VAL
+    VAL --> OUT
+    CAND -.->|no-llm flag| FALLBACK
+    VAL -.->|empty result| FALLBACK
+    FALLBACK --> OUT
+
+    %% ---------- Human and testing checkpoints ----------
+    subgraph CHECK["Human and Testing Checks"]
+        TESTS["pytest suite<br/>test_recommender.py + test_rag.py<br/>fake Claude client, no network"]
+        HUMAN["Human review<br/>reads reasons, checks web sources,<br/>compares against rule scores"]
+        LOG["Log file<br/>logs/recommender.log<br/>token usage, dropped picks, fallbacks"]
+    end
+
+    LLM -.->|usage, request ID| LOG
+    VAL -.->|dropped picks| LOG
+    FALLBACK -.->|warning| LOG
+    LOG --> HUMAN
+
+    TESTS -.->|verifies| LOAD
+    TESTS -.->|verifies| SCORE
+    TESTS -.->|verifies| VAL
+    TESTS -.->|verifies| WEB
+    OUT --> HUMAN
+    HUMAN -.->|adjust weights, playlist, or prompt| PROF
+
+    classDef ai fill:#ede7f6,stroke:#5e35b1,color:#1a1a1a;
+    classDef check fill:#e8f5e9,stroke:#2e7d32,color:#1a1a1a;
+    classDef data fill:#e3f2fd,stroke:#1565c0,color:#1a1a1a;
+    class WEB,LLM ai;
+    class TESTS,HUMAN,VAL,REF,LOG check;
+    class PL,CAT,OUT data;
