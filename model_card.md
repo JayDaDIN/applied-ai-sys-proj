@@ -1,85 +1,114 @@
-# Model Card: VibeFinder CLI Simulation
+# Model Card: VibeFinder RAG (Playlist-Aware Music Recommender)
 
 ## 1. Model Name
 
-**VibeFinder CLI Simulation** — a small, explainable content-based music recommender used for classroom exploration.
+**VibeFinder RAG**: a playlist-aware music recommender that uses retrieval-augmented generation. It extends my Modules 1–3 project, the **VibeFinder CLI Simulation**, a rule-based content recommender over a small fictional catalog.
 
 ## 2. Intended Use
 
-VibeFinder ranks songs in a small fictional catalog according to a listener's stated genre, mood, and audio-feature targets. It is intended for learning how hand-designed recommender rules convert data into scores and rankings.
+VibeFinder RAG recommends songs from a 30-song fictional catalog based on a listener's real playlist. It is a classroom project for learning three things:
 
-The system assumes that a listener can express some of their taste through these fields and that the catalog's metadata is accurate enough for a demonstration. It is not intended for real-world deployment, commercial recommendations, or claims about a person's actual enjoyment.
+- how a transparent rule-based recommender works,
+- how retrieval can ground a large language model in real data, and
+- how to check AI output before trusting it.
+
+It is **not** intended for real-world deployment, commercial recommendations, or claims about what a person will actually enjoy.
 
 ## 3. How the Model Works
 
-Each song is described by genre, mood, energy, tempo, valence, danceability, and acousticness. A profile can specify a preferred genre and mood and target values for each numeric feature.
+The system works in three stages.
 
-Genre and mood each receive 20 possible points when they match exactly after case and whitespace normalization. Energy, tempo, valence, danceability, and acousticness each receive 12 possible points based on closeness to the listener's target. For 0–1 features, match is `max(0, 1 - absolute difference)`. Tempo match is `max(0, 1 - absolute BPM difference / 80)`. The weighted matches are normalized by the weights of the preferences actually provided to produce a score from 0 to 100. Results are ordered by score, with song ID used to break ties.
+1. **Retrieve from the playlist.** The playlist CSV (in the catalog's own format or a Spotify/Exportify export) is turned into a taste profile.
+   - Audio features (energy, tempo, valence, danceability, acousticness) are averaged across the playlist.
+   - The most common genre is mapped onto the catalog's genre labels.
+   - The original weighted scorer then ranks the catalog and returns the top 10 candidates, skipping songs already on the playlist.
+2. **Retrieve from the web (optional).** Claude's web search tool writes short notes on the playlist's top artists and genres. The source URLs are kept.
+3. **Generate and validate.**
+   - Claude (`claude-opus-5-5`) receives the profile, the candidates and the web notes, and returns a ranked JSON pick list with a reason for each song.
+   - Code then keeps only song IDs that were actually retrieved and drops duplicates.
+   - If Claude fails, refuses, returns invalid JSON or returns no valid picks, the system falls back to the rule-based ranking and shows a warning.
 
-The scoring function can also accept `likes_acoustic` when `target_acousticness` is not supplied; it uses the song's acousticness as the match for a listener who likes acoustic music and its inverse otherwise. The CLI sample profiles use the numeric acousticness target.
-
-Compared with the starter, the functional CLI path now reads typed values from CSV, scores tracks across all seven preference dimensions, ranks them, and prints reasons. `Song` and `UserProfile` dataclasses are present as an object-oriented design, but the dataclass `Recommender` methods remain placeholders and are not used by the CLI.
+**The original scorer:** genre and mood are worth 20 points each for an exact match. Energy, tempo, valence, danceability and acousticness are worth 12 points each, based on closeness to the target (tempo is scaled by 80 BPM). The total is normalized to 0–100 over the preferences that were actually provided.
 
 ## 4. Data
 
-The catalog contains **30 fictional songs** stored in `data/songs.csv`. It has 12 genre labels: pop, lofi, rock, ambient, jazz, synthwave, indie pop, folk, electronic, country, hip hop, and r&b. It has six mood labels: happy, chill, intense, relaxed, moody, and focused.
+- **Catalog:** 30 fictional songs in `data/songs.csv`, with 12 genre labels and 6 mood labels. The feature values are illustrative, not measured from audio.
+- **Playlists:** supplied by the user. Two samples are included: `data/sample_playlist.csv` (a Spotify-style lofi export) and `data/sample_playlist_upbeat.csv` (catalog-format pop).
+- **Web notes:** live search results. They are not stored, and they can change between runs.
+- **Data sent outside the machine:** when Claude is enabled, the playlist summary (top artists and genres), the taste profile and the candidate songs are sent to the Anthropic API. With `--web`, artist and genre names are also used as search queries. `--no-llm` keeps everything local.
 
-Twenty fictional rows were added to the original ten-song starter catalog. The catalog has numeric energy, valence, danceability, and acousticness values between 0 and 1 and tempo values in BPM. These values are illustrative metadata; they were not measured from audio. The data contains no listener identities, play counts, ratings, saves, skips, or other interaction history.
+## 5. Evaluation
 
-The catalog cannot represent every genre, subgenre, culture, language, lyrical theme, performance style, or interpretation of mood. Since this is a small synthetic dataset, its scores should not be treated as evidence about real music preferences.
+- **41 automated tests pass:**
+  - 8 original tests for scoring and ranking,
+  - 13 for the RAG pipeline,
+  - 20 for error handling and logging.
+- The tests use a fake Claude client, so they check the pipeline's logic: parsing, retrieval, validation, fallbacks and exit codes. They do **not** measure the quality of Claude's recommendations.
+- The retrieval-only mode was run on both sample playlists and on a deliberately mixed playlist (see Section 8).
+- **Not yet evaluated:** the live Claude path has not been run end to end with a real API key, so the quality of the picks and explanations is still unmeasured.
 
-## 5. Strengths
+## 6. Limitations and Biases
 
-- The rules and weights are simple enough to inspect, explain, and modify.
-- Recommendations can reflect combinations such as intense rock or chill lofi instead of matching a single feature alone.
-- Numeric closeness allows near matches rather than requiring exact equality.
-- The CLI provides a score and match reasons, making it easier to understand why songs rank highly.
-- Contrasting sample profiles produced intuitive top results for this catalog: Daybreak Parade for High-Energy Pop, Library Rain for Chill Lofi, and Storm Runner for Deep Intense Rock.
-- Preferences can be omitted, allowing sparse and numeric-only profiles to be explored.
+**Limitations**
 
-## 6. Limitations and Bias
+- **Tiny, fictional catalog.** Claude can only reorder and explain 30 made-up songs. The playlist and web notes affect ranking and explanations, not what exists.
+- **Averaging flattens taste.** The taste profile is the mean of the playlist's features. A playlist with two different moods gets a "middle" profile that describes neither (see Section 8).
+- **Ties are broken arbitrarily.** When two genres appear equally often, the alphabetically later label wins, and mood ties go to whichever mood appears first. Half of a listener's taste can be silently ignored.
+- **Exports often lack mood.** Spotify-style exports have no mood column, so the mood weight (20 of the 100 points) goes unused for those listeners.
+- **Hand-picked weights.** The scoring weights and the 80 BPM tempo scale are my assumptions, not learned from listener behavior.
+- **Unmeasured AI quality.** Nothing yet measures whether Claude's reordering is better than the rule-based ranking.
 
-- **Small, synthetic catalog:** Styles absent or underrepresented in the 30 rows cannot be surfaced fairly or reliably. How many songs represent a genre can affect the range of available recommendations.
-- **Subjective labels:** Genre and mood depend on labeling choices. Exact matching treats “chill” and “relaxed” as different, even if a listener considers them similar.
-- **Hand-selected weights:** Genre and mood together contribute 40% when all preferences are supplied; the five numeric features contribute 60%. These weights have not been learned or validated with listeners and may privilege some dimensions over others.
-- **Sparse-profile inflation:** The denominator includes only supplied preferences. A profile specifying only genre can give all songs in that genre 100 points and all other songs zero, making a score appear more comprehensive than it is.
-- **Zero-score fallback:** The CLI requests five tracks for each profile. If fewer than five songs match, it can still show zero-score songs to fill the list.
-- **Incomplete view of musical taste:** The model does not analyze the audio and has no lyrics, language, vocals, timbre, artist context, culture, listening situation, or personal memory features.
-- **No collaborative evidence:** The model does not use other listeners' behavior, so it cannot discover tracks through similar users or learn from actual responses.
-- **No validated outcome metric:** A score measures similarity to the encoded profile, not satisfaction or likelihood of listening.
+**Biases**
 
-The profile named “Conflicting Preferences” intentionally combines preferences that rarely occur together in the catalog. Its results demonstrate tradeoffs in the weighted score; they are not a judgment about the listener.
+- **Catalog and label bias.** The catalog's genres are broad Western labels (pop, rock, lofi, folk, ...). Fine-grained or non-Western genres get mapped onto whatever label they contain, or onto none at all. Those listeners get worse matches.
+- **Popularity bias from the web.** Search results are richer for well-known artists. Listeners of popular music get more detailed, more personal explanations, while listeners of niche or local artists get thin or generic notes.
+- **Language-model bias.** Claude's reasons can reflect stereotypes about genres or the people who listen to them, and its wording can make a weak match sound convincing.
+- **Designer bias.** I decided which features matter and how much: genre and mood together are 40% of the score. Someone who cares mostly about lyrics, language or vocals isn't represented at all.
 
-## 7. Evaluation
+## 7. Potential Misuse and Prevention
 
-The recommender was tested using these seven CLI profiles:
+**How it could be misused**
 
-1. High-Energy Pop
-2. Chill Lofi
-3. Deep Intense Rock
-4. Acoustic Folk
-5. Conflicting Preferences
-6. Sparse Case-Insensitive Genre
-7. Unseen Genre and Mood
+- **Prompt injection.** Web pages, and even song titles in a playlist file, are text that reaches the model. A crafted page or title could try to make Claude ignore the listener or push a specific song.
+- **Covert promotion.** Someone controlling the catalog, the weights or the prompt could quietly favor certain artists (a digital form of payola) while the explanations make the picks look personal.
+- **Privacy exposure.** A playlist can reveal personal things: mood, religion, culture, life events. Running someone else's playlist without their consent sends that information to an outside API and to web search.
+- **Cost abuse.** Each Claude run costs money. Running it in a loop, or on very large inputs, could run up an API bill.
+- **Overtrust.** Users might treat confident AI explanations as facts about themselves.
 
-Automated tests check that recommendations are sorted, scores stay between 0 and 100, the first three profiles produce expected top tracks, sparse and unseen labels work, and an empty preference dictionary raises a clear error. CSV loading and the starter dataclass behavior are also tested. The test suite has **8 passing tests**.
+**How I prevent or reduce it**
 
-In the observed run, the expected top songs appeared for High-Energy Pop, Chill Lofi, and Deep Intense Rock. The conflicting profile ranked acoustic chill tracks highly because mood and acousticness aligned despite the rock preference not matching. The unseen-label profile still produced rankings using its numeric preferences. The genre-only profile scored all matching pop songs at 100 and showed a zero-score fifth result because the CLI asks for five tracks while only four catalog tracks have that genre.
+- **Claude can only choose from retrieved candidates.** This is enforced in code by `validate_picks`, not just requested in the prompt. Every dropped pick is logged as a warning, so injected or invented songs can't be shown and leave a trace.
+- **Web notes are marked as untrusted.** The system prompt tells Claude to treat them as reference data, not instructions.
+- **Rule-based scores are shown beside Claude's picks.** A strange reordering is visible to the user and easy to question.
+- **Usage is limited and logged.** Web search is capped at 4 searches per run, each run makes at most a few calls, and the log records token usage per call. `--no-llm` runs fully offline.
+- **Only summaries are sent.** Claude receives the top artists, top genres and the averaged profile, not the full playlist. The README states what leaves the machine.
+- **Refusals are handled.** If Claude declines, the system falls back to rule-based results instead of retrying around the refusal.
+- **If this were deployed:** I would add a consent notice before sending playlist data, rate limits per user, an audit of weight and catalog changes, and a label stating that the explanations are AI-generated.
 
-This evaluation verifies implementation behavior against examples; it does not measure real user satisfaction, catalog fairness, or predictive accuracy.
+## 8. What Surprised Me While Testing Reliability
 
-## 8. Future Work
+- **A mixed playlist lost half its identity.** I tested a playlist with 2 heavy rock tracks and 2 ambient tracks. The top 5 contained **no ambient songs**. Both genres had 2 tracks each, and the tie went to "rock" only because of alphabetical order. Mood went to "intense" because it appeared first. The averaged energy (0.57) and acousticness (0.49) matched neither half. Nothing crashed and every test passed, yet the output was wrong for this listener. Passing tests didn't mean the system was reliable for every kind of listener.
+- **The rule-based scorer beat my intuition.** I expected *Midnight Coding* to rank first for the lofi playlist, but *Focus Flow* scored higher (96.9 vs 95.3). Two of my tests failed because my expectation was wrong, not the code. The right fix was to change the tests, not the code.
+- **"Missing API key" didn't look like an API error.** With no credentials, the Anthropic SDK raises a plain Python `TypeError` instead of one of its own error types. My first error handler would have reported it as a bug. I only found this by actually running the failure case.
+- **A request "working" proved less than I thought.** A request with a deliberately invalid key reached the API and returned 401. That showed the client code runs, but authentication is checked before the request body, so it didn't prove the API would accept the request itself.
+- **Fallbacks can hide failure.** Because the system falls back to rule-based results, a run where Claude failed still exits successfully. That's good for the user, but a run can look fine when the AI part didn't run at all. That's why the output says "rule-based only; Claude step failed, see warning", and the log records it.
 
-- Gather listener ratings or implicit feedback (plays, skips, saves, replays) and evaluate rankings against held-out feedback.
-- Tune weights using a documented validation method rather than intuition alone.
-- Add related-label or multi-label genre/mood matching to handle overlapping styles.
-- Add results diversity controls, such as limiting repeated artists or avoiding nearly identical top tracks.
-- Make the requested result count configurable and consider excluding zero-score recommendations.
-- Track how much of each score comes from provided preferences so sparse-profile scores are not misinterpreted.
-- Expand the catalog with more representative and carefully documented metadata.
-- Implement the dataclass-based `Recommender` and explanations consistently with the functional scoring path.
-- Add richer content signals such as lyrics or audio embeddings only with appropriate data provenance, evaluation, and safeguards.
+## 9. Collaboration with AI
 
-## 9. Personal Reflection
+I built this project with **Claude Code**, an AI coding assistant, working in my repository. I described the goals: add RAG using a real playlist and the web, create a system diagram, write the README, and add logging and error handling. The assistant read my existing code, proposed a design, wrote the code and tests, and ran them. My job was to direct the work, review the changes, decide what fit the assignment, and check claims against real runs instead of trusting summaries.
 
-I learned that a recommender can be built from understandable rules: represent a listener's preferences, compare them with item features, and rank the results. I also learned that the score reflects the assumptions and weights chosen by the designer, not a guarantee that someone will enjoy a song. Testing different profiles showed how missing data, subjective labels, and conflicting preferences can change the results. A larger catalog and real listener feedback would be needed to tell whether the recommendations are genuinely useful.
+**A suggestion I accepted:** keep my original rule-based scorer as the *retriever*, and only let Claude choose from the candidates it returns, with every returned song ID checked in code. I accepted this because it fit my project exactly. It reuses the transparent system I built in Modules 1–3, it makes hallucinated songs impossible to show instead of just unlikely, and it gives every AI pick a rule-based score to compare against. It also made the AI part testable without an API key.
+
+**A suggestion I did not accept as written:** the first version of the error handling logged each Claude failure as an error, then logged it again as a warning, then printed it a third time in a "Notes" section. A missing file was also reported twice (`ERROR:` and `Error:`). It was technically thorough but harder to read, and a user seeing three copies of one message would think three things went wrong. The version I kept reports each problem **once** on the console, puts details and tracebacks only in the log file, and records the low-level API failure at INFO level, since the caller decides whether it's fatal.
+
+**A suggestion that was out of scope:** connecting directly to Spotify with an OAuth sign-in. That would need app registration and a sign-in flow, and Spotify has restricted audio-feature data for new apps. A CSV export gave the same retrieval benefit with far less complexity, so the project uses CSV files.
+
+**What I learned about working with AI:** the assistant was fast and thorough, but some of its first answers were wrong or over-built: two wrong test expectations, a placeholder `if True:` block that had to be rewritten, and the noisy error output. Running the code, reading the actual output and asking "is this what a user should see?" caught problems the AI's own summaries did not.
+
+## 10. Future Work
+
+- Handle mixed playlists by building several taste profiles (for example by clustering tracks) instead of one average, and break genre and mood ties by blending instead of alphabetical order.
+- Run the live Claude path with an API key and compare Claude's picks with the rule-based ranking on a set of test playlists, ideally with feedback from real listeners.
+- Add related-label matching (for example, "chill" ≈ "relaxed") and a larger, more diverse catalog.
+- Add diversity controls, such as limiting repeated artists.
+- Add a consent prompt before sending playlist data to external services.

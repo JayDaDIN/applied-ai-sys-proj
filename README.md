@@ -254,6 +254,7 @@ This project showed me that a lot of the work in adding AI to a system goes into
 
 - The catalog has only 30 fictional tracks, so Claude can reorder and explain songs but can only choose from these.
 - Genre and mood labels are subjective, and exact matching misses related labels such as "relaxed" and "chill".
+- The taste profile averages the whole playlist, so a playlist with two different styles gets a "middle" profile that fits neither. In testing, a half-rock, half-ambient playlist got zero ambient recommendations because of an alphabetical tie-break (details in `model_card.md`).
 - Audio features are rough stand-ins for how music sounds. The system doesn't analyze audio, lyrics or cultural context.
 - The weights and the tempo scale are hand-picked assumptions, not learned from listener behavior.
 - Web notes come from live search results. They can be wrong, out of date or biased toward well-known artists, and they change between runs.
